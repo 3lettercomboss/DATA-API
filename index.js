@@ -31,8 +31,20 @@ function auth(req, res, next) {
 }
 app.use("/api", auth);
 
-// ── Bootstrap tables on startup ─────────────────────────────
-async function initDB() {
+// ── Bootstrap tables on startup (with retries) ─────────────
+async function initDB(retries = 5, delay = 3000) {
+  for (let i = 0; i < retries; i++) {
+    try {
+      return await _createTables();
+    } catch (err) {
+      console.log(`⏳ DB connection attempt ${i + 1}/${retries} failed, retrying in ${delay / 1000}s...`);
+      if (i === retries - 1) throw err;
+      await new Promise((r) => setTimeout(r, delay));
+    }
+  }
+}
+
+async function _createTables() {
   await pool.query(`
     CREATE TABLE IF NOT EXISTS crews (
       id          SERIAL PRIMARY KEY,
