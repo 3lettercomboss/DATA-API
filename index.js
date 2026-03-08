@@ -866,7 +866,9 @@ app.get("/api/whitelists/:name", async (req, res) => {
     if (result.rows.length === 0) {
       return res.status(404).json({ ok: false, error: "Whitelist not found" });
     }
-    res.json({ ok: true, whitelist: result.rows[0] });
+    const row = result.rows[0];
+    // Return playerIds at top level (website expects this) + full whitelist object
+    res.json({ ok: true, name: row.name, playerIds: row.player_ids, whitelist: row });
   } catch (err) {
     console.error("GET /api/whitelists/:name error:", err);
     res.status(500).json({ ok: false, error: "Internal server error" });
@@ -896,59 +898,73 @@ app.post("/api/whitelists", async (req, res) => {
   }
 });
 
-// ── Add a player to a whitelist ─────────────────────────────
+// ── Add player(s) to a whitelist ────────────────────────────
 // POST /api/whitelists/:name/add
-// Body: { playerId }
+// Body: { playerId } — accepts a single number OR an array of numbers
 app.post("/api/whitelists/:name/add", async (req, res) => {
   try {
     const { name } = req.params;
-    const { playerId } = req.body;
-    if (!playerId) {
+    const raw = req.body.playerId ?? req.body.playerIds;
+    if (!raw) {
       return res.status(400).json({ ok: false, error: "playerId is required" });
+    }
+    // Normalize to flat array of numbers
+    const toAdd = (Array.isArray(raw) ? raw.flat() : [raw]).map(Number).filter(Boolean);
+    if (toAdd.length === 0) {
+      return res.status(400).json({ ok: false, error: "No valid player IDs provided" });
     }
     const wl = await pool.query("SELECT * FROM whitelists WHERE name = $1", [name]);
     if (wl.rows.length === 0) {
       return res.status(404).json({ ok: false, error: "Whitelist not found" });
     }
     const ids = wl.rows[0].player_ids;
-    if (ids.includes(playerId)) {
-      return res.status(409).json({ ok: false, error: "Player already in whitelist" });
+    let added = 0;
+    for (const pid of toAdd) {
+      if (!ids.includes(pid)) {
+        ids.push(pid);
+        added++;
+      }
     }
-    ids.push(playerId);
+    if (added === 0) {
+      return res.status(409).json({ ok: false, error: "Player(s) already in whitelist" });
+    }
     await pool.query(
       "UPDATE whitelists SET player_ids = $1, updated_at = NOW() WHERE name = $2",
       [JSON.stringify(ids), name]
     );
-    res.json({ ok: true, message: "Player added", playerIds: ids });
+    res.json({ ok: true, message: `Added ${added} player(s)`, playerIds: ids });
   } catch (err) {
     console.error("POST /api/whitelists/:name/add error:", err);
     res.status(500).json({ ok: false, error: "Internal server error" });
   }
 });
 
-// ── Remove a player from a whitelist ────────────────────────
+// ── Remove player(s) from a whitelist ───────────────────────
 // POST /api/whitelists/:name/remove
-// Body: { playerId }
+// Body: { playerId } — accepts a single number OR an array of numbers
 app.post("/api/whitelists/:name/remove", async (req, res) => {
   try {
     const { name } = req.params;
-    const { playerId } = req.body;
-    if (!playerId) {
+    const raw = req.body.playerId ?? req.body.playerIds;
+    if (!raw) {
       return res.status(400).json({ ok: false, error: "playerId is required" });
     }
+    // Normalize to flat array of numbers
+    const toRemove = new Set((Array.isArray(raw) ? raw.flat() : [raw]).map(Number));
     const wl = await pool.query("SELECT * FROM whitelists WHERE name = $1", [name]);
     if (wl.rows.length === 0) {
       return res.status(404).json({ ok: false, error: "Whitelist not found" });
     }
-    const ids = wl.rows[0].player_ids.filter((id) => id !== playerId);
-    if (ids.length === wl.rows[0].player_ids.length) {
-      return res.status(404).json({ ok: false, error: "Player not in whitelist" });
+    const before = wl.rows[0].player_ids.length;
+    const ids = wl.rows[0].player_ids.filter((id) => !toRemove.has(id));
+    if (ids.length === before) {
+      return res.status(404).json({ ok: false, error: "Player(s) not in whitelist" });
     }
     await pool.query(
       "UPDATE whitelists SET player_ids = $1, updated_at = NOW() WHERE name = $2",
       [JSON.stringify(ids), name]
     );
-    res.json({ ok: true, message: "Player removed", playerIds: ids });
+    res.json({ ok: true, message: `Removed ${before - ids.length} player(s)`, playerIds: ids });
   } catch (err) {
     console.error("POST /api/whitelists/:name/remove error:", err);
     res.status(500).json({ ok: false, error: "Internal server error" });
