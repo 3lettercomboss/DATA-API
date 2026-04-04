@@ -1106,6 +1106,15 @@ app.post("/api/moderation/migrate", async (req, res) => {
   }
 });
 
+// Clean up old kicks (older than 1 hour)
+setInterval(async () => {
+  try {
+    await pool.query("DELETE FROM kick_queue WHERE created_at < NOW() - INTERVAL '1 hour'");
+  } catch (err) {
+    console.error("Kick queue cleanup error:", err);
+  }
+}, 600000); // every 10 minutes
+
 const PORT = process.env.PORT || 3000;
 
 initDB().then(() => {
