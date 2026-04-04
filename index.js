@@ -123,6 +123,14 @@ async function initDB() {
     );
 
     CREATE INDEX IF NOT EXISTS idx_previous_bans_player ON previous_bans(player_id);
+
+    CREATE TABLE IF NOT EXISTS kick_queue (
+      id          SERIAL PRIMARY KEY,
+      player_id   BIGINT       NOT NULL,
+      reason      TEXT         DEFAULT '',
+      kicked_by   VARCHAR(50)  DEFAULT 'Unknown',
+      created_at  TIMESTAMPTZ  DEFAULT NOW()
+    );
   `);
   console.log("Database tables ready");
 }
@@ -858,6 +866,40 @@ app.delete("/api/whitelists/:name", async (req, res) => {
 //  MODERATION / BAN ENDPOINTS
 // =============================================================
 
+app.get("/api/moderation/recent", async (req, res) => {
+  try {
+    const after = req.query.after;
+    if (!after) {
+      return res.status(400).json({ ok: false, error: "after timestamp required" });
+    }
+    const result = await pool.query(
+      "SELECT player_id, banned, ban_reason FROM banned_players WHERE updated_at > to_timestamp($1) ORDER BY updated_at",
+      [after]
+    );
+    res.json({ ok: true, actions: result.rows, serverTime: Math.floor(Date.now() / 1000) });
+  } catch (err) {
+    console.error("GET /api/moderation/recent error:", err);
+    res.status(500).json({ ok: false, error: "Internal server error" });
+  }
+});
+
+app.get("/api/moderation/recent-kicks", async (req, res) => {
+  try {
+    const after = req.query.after;
+    if (!after) {
+      return res.status(400).json({ ok: false, error: "after timestamp required" });
+    }
+    const result = await pool.query(
+      "SELECT player_id, reason, kicked_by FROM kick_queue WHERE created_at > to_timestamp($1) ORDER BY created_at",
+      [after]
+    );
+    res.json({ ok: true, kicks: result.rows, serverTime: Math.floor(Date.now() / 1000) });
+  } catch (err) {
+    console.error("GET /api/moderation/recent-kicks error:", err);
+    res.status(500).json({ ok: false, error: "Internal server error" });
+  }
+});
+
 app.get("/api/moderation/:playerId", async (req, res) => {
   try {
     const { playerId } = req.params;
@@ -988,6 +1030,21 @@ app.post("/api/moderation/:playerId/unban", async (req, res) => {
     res.json({ ok: true, data: result.rows[0] });
   } catch (err) {
     console.error("POST /api/moderation/:playerId/unban error:", err);
+    res.status(500).json({ ok: false, error: "Internal server error" });
+  }
+});
+
+app.post("/api/moderation/:playerId/kick", async (req, res) => {
+  try {
+    const { playerId } = req.params;
+    const { Reason, Admin } = req.body;
+    const result = await pool.query(
+      "INSERT INTO kick_queue (player_id, reason, kicked_by) VALUES ($1, $2, $3) RETURNING *",
+      [playerId, Reason || "", Admin || "Unknown"]
+    );
+    res.json({ ok: true, data: result.rows[0] });
+  } catch (err) {
+    console.error("POST /api/moderation/:playerId/kick error:", err);
     res.status(500).json({ ok: false, error: "Internal server error" });
   }
 });
