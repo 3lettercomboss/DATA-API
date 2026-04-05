@@ -1195,6 +1195,20 @@ setInterval(async () => {
   }
 }, 600000); // every 10 minutes
 
+// ─── Admin Migration ─────────────────────────────────────────
+app.post("/api/admin/migrate-columns", async (req, res) => {
+  try {
+    await pool.query(`
+      ALTER TABLE banned_players ADD COLUMN IF NOT EXISTS ban_duration BIGINT DEFAULT -1;
+      ALTER TABLE banned_players ADD COLUMN IF NOT EXISTS ban_expires BIGINT DEFAULT 0;
+    `);
+    res.json({ ok: true, message: "Columns added" });
+  } catch (err) {
+    console.error("Migration error:", err);
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
 const PORT = process.env.PORT || 3000;
 
 initDB().then(() => {
