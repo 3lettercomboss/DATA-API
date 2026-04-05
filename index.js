@@ -886,6 +886,20 @@ app.get("/api/staff", async (req, res) => {
   }
 });
 
+app.get("/api/staff/discord/:discordId", async (req, res) => {
+  try {
+    const { discordId } = req.params;
+    const result = await pool.query("SELECT * FROM staff WHERE discord_id = $1", [discordId]);
+    if (result.rows.length === 0) {
+      return res.status(404).json({ ok: false, error: "Staff member not found" });
+    }
+    res.json({ ok: true, staff: result.rows[0] });
+  } catch (err) {
+    console.error("GET /api/staff/discord/:discordId error:", err);
+    res.status(500).json({ ok: false, error: "Internal server error" });
+  }
+});
+
 app.get("/api/staff/:playerId", async (req, res) => {
   try {
     const { playerId } = req.params;
