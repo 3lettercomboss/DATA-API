@@ -108,6 +108,8 @@ async function initDB() {
       banned          BOOLEAN      DEFAULT true,
       ban_reason      TEXT         DEFAULT '',
       ban_time        BIGINT       DEFAULT 0,
+      ban_duration    BIGINT       DEFAULT -1,
+      ban_expires     BIGINT       DEFAULT 0,
       action_taken_by VARCHAR(50)  DEFAULT '',
       created_at      TIMESTAMPTZ  DEFAULT NOW(),
       updated_at      TIMESTAMPTZ  DEFAULT NOW()
@@ -944,7 +946,7 @@ app.get("/api/moderation/recent", async (req, res) => {
       return res.status(400).json({ ok: false, error: "after timestamp required" });
     }
     const result = await pool.query(
-      "SELECT player_id, banned, ban_reason FROM banned_players WHERE updated_at > to_timestamp($1) ORDER BY updated_at",
+      "SELECT player_id, banned, ban_reason, ban_duration, ban_expires FROM banned_players WHERE updated_at > to_timestamp($1) ORDER BY updated_at",
       [after]
     );
     res.json({ ok: true, actions: result.rows, serverTime: Math.floor(Date.now() / 1000) });
@@ -993,6 +995,8 @@ app.get("/api/moderation/:playerId", async (req, res) => {
       Banned: row.banned,
       BanReason: row.ban_reason,
       BanTime: Number(row.ban_time),
+      BanDuration: Number(row.ban_duration || -1),
+      BanExpires: Number(row.ban_expires || 0),
       ActionTakenBy: row.action_taken_by,
       PreviousBans: prevResult.rows.length > 0
         ? prevResult.rows.reduce((acc, r, i) => {
@@ -1040,7 +1044,7 @@ app.put("/api/moderation/:playerId", async (req, res) => {
 app.post("/api/moderation/:playerId/ban", async (req, res) => {
   try {
     const { playerId } = req.params;
-    const { Reason, Admin, Username, DisplayName } = req.body;
+    const { Reason, Admin, Username, DisplayName, Duration } = req.body;
 
     const existing = await pool.query(
       "SELECT * FROM banned_players WHERE player_id = $1",
@@ -1060,13 +1064,16 @@ app.post("/api/moderation/:playerId/ban", async (req, res) => {
     }
 
     const now = Math.floor(Date.now() / 1000);
+    const duration = Duration != null ? Number(Duration) : -1;
+    const expires = duration > 0 ? now + duration : 0;
+
     const result = await pool.query(
-      `INSERT INTO banned_players (player_id, username, display_name, banned, ban_reason, ban_time, action_taken_by, updated_at)
-       VALUES ($1, $2, $3, true, $4, $5, $6, NOW())
+      `INSERT INTO banned_players (player_id, username, display_name, banned, ban_reason, ban_time, ban_duration, ban_expires, action_taken_by, updated_at)
+       VALUES ($1, $2, $3, true, $4, $5, $6, $7, $8, NOW())
        ON CONFLICT (player_id) DO UPDATE SET
          username = COALESCE(NULLIF($2, ''), banned_players.username),
          display_name = COALESCE(NULLIF($3, ''), banned_players.display_name),
-         banned = true, ban_reason = $4, ban_time = $5, action_taken_by = $6, updated_at = NOW()
+         banned = true, ban_reason = $4, ban_time = $5, ban_duration = $6, ban_expires = $7, action_taken_by = $8, updated_at = NOW()
        RETURNING *`,
       [
         playerId,
@@ -1074,6 +1081,8 @@ app.post("/api/moderation/:playerId/ban", async (req, res) => {
         DisplayName || "",
         Reason || "",
         now,
+        duration,
+        expires,
         Admin || "Unknown",
       ]
     );
