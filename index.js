@@ -131,6 +131,14 @@ async function initDB() {
       kicked_by   VARCHAR(50)  DEFAULT 'Unknown',
       created_at  TIMESTAMPTZ  DEFAULT NOW()
     );
+
+    CREATE TABLE IF NOT EXISTS staff (
+      player_id   BIGINT       PRIMARY KEY,
+      discord_id  BIGINT,
+      username    VARCHAR(50)  DEFAULT '',
+      rank        INT          NOT NULL,
+      created_at  TIMESTAMPTZ  DEFAULT NOW()
+    );
   `);
   console.log("Database tables ready");
 }
@@ -858,6 +866,69 @@ app.delete("/api/whitelists/:name", async (req, res) => {
     res.json({ ok: true, message: "Whitelist deleted" });
   } catch (err) {
     console.error("DELETE /api/whitelists/:name error:", err);
+    res.status(500).json({ ok: false, error: "Internal server error" });
+  }
+});
+
+// =============================================================
+//  STAFF ENDPOINTS
+// =============================================================
+
+app.get("/api/staff", async (req, res) => {
+  try {
+    const result = await pool.query("SELECT player_id, discord_id, username, rank FROM staff ORDER BY rank DESC");
+    res.json({ ok: true, staff: result.rows });
+  } catch (err) {
+    console.error("GET /api/staff error:", err);
+    res.status(500).json({ ok: false, error: "Internal server error" });
+  }
+});
+
+app.get("/api/staff/:playerId", async (req, res) => {
+  try {
+    const { playerId } = req.params;
+    const result = await pool.query("SELECT * FROM staff WHERE player_id = $1", [playerId]);
+    if (result.rows.length === 0) {
+      return res.status(404).json({ ok: false, error: "Staff member not found" });
+    }
+    res.json({ ok: true, staff: result.rows[0] });
+  } catch (err) {
+    console.error("GET /api/staff/:playerId error:", err);
+    res.status(500).json({ ok: false, error: "Internal server error" });
+  }
+});
+
+app.post("/api/staff", async (req, res) => {
+  try {
+    const { playerId, discordId, username, rank } = req.body;
+    if (!playerId || rank == null) {
+      return res.status(400).json({ ok: false, error: "playerId and rank are required" });
+    }
+    const result = await pool.query(
+      `INSERT INTO staff (player_id, discord_id, username, rank)
+       VALUES ($1, $2, $3, $4)
+       ON CONFLICT (player_id) DO UPDATE SET
+         discord_id = $2, username = $3, rank = $4
+       RETURNING *`,
+      [playerId, discordId || null, username || "", rank]
+    );
+    res.status(201).json({ ok: true, staff: result.rows[0] });
+  } catch (err) {
+    console.error("POST /api/staff error:", err);
+    res.status(500).json({ ok: false, error: "Internal server error" });
+  }
+});
+
+app.delete("/api/staff/:playerId", async (req, res) => {
+  try {
+    const { playerId } = req.params;
+    const result = await pool.query("DELETE FROM staff WHERE player_id = $1", [playerId]);
+    if (result.rowCount === 0) {
+      return res.status(404).json({ ok: false, error: "Staff member not found" });
+    }
+    res.json({ ok: true, message: "Staff member removed" });
+  } catch (err) {
+    console.error("DELETE /api/staff/:playerId error:", err);
     res.status(500).json({ ok: false, error: "Internal server error" });
   }
 });
