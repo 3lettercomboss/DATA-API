@@ -141,6 +141,17 @@ async function initDB() {
       rank        INT          NOT NULL,
       created_at  TIMESTAMPTZ  DEFAULT NOW()
     );
+
+    CREATE TABLE IF NOT EXISTS strikes (
+      id          SERIAL PRIMARY KEY,
+      player_id   BIGINT       NOT NULL,
+      discord_id  BIGINT,
+      reason      TEXT         DEFAULT '',
+      issued_by   VARCHAR(50)  DEFAULT '',
+      created_at  TIMESTAMPTZ  DEFAULT NOW()
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_strikes_player ON strikes(player_id);
   `);
   console.log("Database tables ready");
 }
@@ -945,6 +956,60 @@ app.delete("/api/staff/:playerId", async (req, res) => {
     res.json({ ok: true, message: "Staff member removed" });
   } catch (err) {
     console.error("DELETE /api/staff/:playerId error:", err);
+    res.status(500).json({ ok: false, error: "Internal server error" });
+  }
+});
+
+// =============================================================
+//  STRIKE ENDPOINTS
+// =============================================================
+
+app.get("/api/strikes/:playerId", async (req, res) => {
+  try {
+    const { playerId } = req.params;
+    const result = await pool.query(
+      "SELECT * FROM strikes WHERE player_id = $1 ORDER BY created_at",
+      [playerId]
+    );
+    res.json({ ok: true, strikes: result.rows, count: result.rows.length });
+  } catch (err) {
+    console.error("GET /api/strikes/:playerId error:", err);
+    res.status(500).json({ ok: false, error: "Internal server error" });
+  }
+});
+
+app.post("/api/strikes", async (req, res) => {
+  try {
+    const { playerId, discordId, reason, issuedBy } = req.body;
+    if (!playerId) {
+      return res.status(400).json({ ok: false, error: "playerId is required" });
+    }
+    const result = await pool.query(
+      "INSERT INTO strikes (player_id, discord_id, reason, issued_by) VALUES ($1, $2, $3, $4) RETURNING *",
+      [playerId, discordId || null, reason || "", issuedBy || "Unknown"]
+    );
+    const countResult = await pool.query(
+      "SELECT COUNT(*)::int AS count FROM strikes WHERE player_id = $1",
+      [playerId]
+    );
+    res.status(201).json({
+      ok: true,
+      strike: result.rows[0],
+      totalStrikes: countResult.rows[0].count,
+    });
+  } catch (err) {
+    console.error("POST /api/strikes error:", err);
+    res.status(500).json({ ok: false, error: "Internal server error" });
+  }
+});
+
+app.delete("/api/strikes/:playerId", async (req, res) => {
+  try {
+    const { playerId } = req.params;
+    const result = await pool.query("DELETE FROM strikes WHERE player_id = $1", [playerId]);
+    res.json({ ok: true, message: `Cleared ${result.rowCount} strike(s)` });
+  } catch (err) {
+    console.error("DELETE /api/strikes/:playerId error:", err);
     res.status(500).json({ ok: false, error: "Internal server error" });
   }
 });
