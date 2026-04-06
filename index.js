@@ -140,6 +140,7 @@ async function initDB() {
       username    VARCHAR(50)  DEFAULT '',
       rank        INT          NOT NULL,
       log_count   INT          DEFAULT 0,
+      server_role VARCHAR(50)  DEFAULT '',
       created_at  TIMESTAMPTZ  DEFAULT NOW()
     );
 
@@ -977,6 +978,26 @@ app.delete("/api/staff/:playerId", async (req, res) => {
 });
 
 // =============================================================
+//  SERVER ROLE ENDPOINTS
+// =============================================================
+
+app.post("/api/staff/:playerId/server-role", async (req, res) => {
+  try {
+    const { playerId } = req.params;
+    const { serverRole } = req.body;
+    const result = await pool.query(
+      "UPDATE staff SET server_role = $1 WHERE player_id = $2 RETURNING *",
+      [serverRole || "", playerId]
+    );
+    if (result.rows.length === 0) return res.status(404).json({ ok: false, error: "Staff not found" });
+    res.json({ ok: true, staff: result.rows[0] });
+  } catch (err) {
+    console.error("POST /api/staff/:playerId/server-role error:", err);
+    res.status(500).json({ ok: false, error: "Internal server error" });
+  }
+});
+
+// =============================================================
 //  LOG COUNT ENDPOINTS
 // =============================================================
 
@@ -1420,6 +1441,7 @@ app.post("/api/admin/migrate-columns", async (req, res) => {
       ALTER TABLE banned_players ADD COLUMN IF NOT EXISTS ban_duration BIGINT DEFAULT -1;
       ALTER TABLE banned_players ADD COLUMN IF NOT EXISTS ban_expires BIGINT DEFAULT 0;
       ALTER TABLE staff ADD COLUMN IF NOT EXISTS log_count INT DEFAULT 0;
+      ALTER TABLE staff ADD COLUMN IF NOT EXISTS server_role VARCHAR(50) DEFAULT '';
       ALTER TABLE blacklist_groups ADD COLUMN IF NOT EXISTS group_name VARCHAR(100) DEFAULT '';
       DROP TABLE IF EXISTS mod_logs;
     `);
