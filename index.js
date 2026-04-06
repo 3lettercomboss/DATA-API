@@ -139,6 +139,7 @@ async function initDB() {
       discord_id  BIGINT,
       username    VARCHAR(50)  DEFAULT '',
       rank        INT          NOT NULL,
+      log_count   INT          DEFAULT 0,
       created_at  TIMESTAMPTZ  DEFAULT NOW()
     );
 
@@ -152,18 +153,6 @@ async function initDB() {
     );
 
     CREATE INDEX IF NOT EXISTS idx_strikes_player ON strikes(player_id);
-
-    CREATE TABLE IF NOT EXISTS mod_logs (
-      id              SERIAL PRIMARY KEY,
-      staff_player_id BIGINT       NOT NULL,
-      staff_discord_id BIGINT,
-      action_type     VARCHAR(20)  NOT NULL,
-      target_player_id BIGINT,
-      reason          TEXT         DEFAULT '',
-      created_at      TIMESTAMPTZ  DEFAULT NOW()
-    );
-
-    CREATE INDEX IF NOT EXISTS idx_mod_logs_staff ON mod_logs(staff_player_id);
   `);
   console.log("Database tables ready");
 }
@@ -973,59 +962,50 @@ app.delete("/api/staff/:playerId", async (req, res) => {
 });
 
 // =============================================================
-//  MOD LOG ENDPOINTS
+//  LOG COUNT ENDPOINTS
 // =============================================================
 
 app.get("/api/logs/:playerId", async (req, res) => {
   try {
     const { playerId } = req.params;
-    const result = await pool.query(
-      "SELECT COUNT(*)::int AS count FROM mod_logs WHERE staff_player_id = $1",
-      [playerId]
-    );
-    res.json({ ok: true, count: result.rows[0].count });
+    const result = await pool.query("SELECT log_count FROM staff WHERE player_id = $1", [playerId]);
+    if (result.rows.length === 0) return res.status(404).json({ ok: false, error: "Staff not found" });
+    res.json({ ok: true, count: result.rows[0].log_count });
   } catch (err) {
     console.error("GET /api/logs/:playerId error:", err);
     res.status(500).json({ ok: false, error: "Internal server error" });
   }
 });
 
-app.get("/api/logs/:playerId/history", async (req, res) => {
+app.post("/api/logs/increment", async (req, res) => {
   try {
-    const { playerId } = req.params;
-    const limit = Math.min(parseInt(req.query.limit) || 20, 100);
+    const { playerId, amount } = req.body;
+    if (!playerId) return res.status(400).json({ ok: false, error: "playerId is required" });
+    const add = amount || 1;
     const result = await pool.query(
-      "SELECT * FROM mod_logs WHERE staff_player_id = $1 ORDER BY created_at DESC LIMIT $2",
-      [playerId, limit]
+      "UPDATE staff SET log_count = log_count + $1 WHERE player_id = $2 RETURNING log_count",
+      [add, playerId]
     );
-    const countResult = await pool.query(
-      "SELECT COUNT(*)::int AS count FROM mod_logs WHERE staff_player_id = $1",
-      [playerId]
-    );
-    res.json({ ok: true, logs: result.rows, count: countResult.rows[0].count });
+    if (result.rows.length === 0) return res.status(404).json({ ok: false, error: "Staff not found" });
+    res.json({ ok: true, totalLogs: result.rows[0].log_count });
   } catch (err) {
-    console.error("GET /api/logs/:playerId/history error:", err);
+    console.error("POST /api/logs/increment error:", err);
     res.status(500).json({ ok: false, error: "Internal server error" });
   }
 });
 
-app.post("/api/logs", async (req, res) => {
+app.post("/api/logs/set", async (req, res) => {
   try {
-    const { staffPlayerId, staffDiscordId, actionType, targetPlayerId, reason } = req.body;
-    if (!staffPlayerId || !actionType) {
-      return res.status(400).json({ ok: false, error: "staffPlayerId and actionType are required" });
-    }
+    const { playerId, count } = req.body;
+    if (!playerId || count == null) return res.status(400).json({ ok: false, error: "playerId and count are required" });
     const result = await pool.query(
-      "INSERT INTO mod_logs (staff_player_id, staff_discord_id, action_type, target_player_id, reason) VALUES ($1, $2, $3, $4, $5) RETURNING *",
-      [staffPlayerId, staffDiscordId || null, actionType, targetPlayerId || null, reason || ""]
+      "UPDATE staff SET log_count = $1 WHERE player_id = $2 RETURNING log_count",
+      [count, playerId]
     );
-    const countResult = await pool.query(
-      "SELECT COUNT(*)::int AS count FROM mod_logs WHERE staff_player_id = $1",
-      [staffPlayerId]
-    );
-    res.status(201).json({ ok: true, log: result.rows[0], totalLogs: countResult.rows[0].count });
+    if (result.rows.length === 0) return res.status(404).json({ ok: false, error: "Staff not found" });
+    res.json({ ok: true, totalLogs: result.rows[0].log_count });
   } catch (err) {
-    console.error("POST /api/logs error:", err);
+    console.error("POST /api/logs/set error:", err);
     res.status(500).json({ ok: false, error: "Internal server error" });
   }
 });
@@ -1350,8 +1330,10 @@ app.post("/api/admin/migrate-columns", async (req, res) => {
     await pool.query(`
       ALTER TABLE banned_players ADD COLUMN IF NOT EXISTS ban_duration BIGINT DEFAULT -1;
       ALTER TABLE banned_players ADD COLUMN IF NOT EXISTS ban_expires BIGINT DEFAULT 0;
+      ALTER TABLE staff ADD COLUMN IF NOT EXISTS log_count INT DEFAULT 0;
+      DROP TABLE IF EXISTS mod_logs;
     `);
-    res.json({ ok: true, message: "Columns added" });
+    res.json({ ok: true, message: "Migration complete" });
   } catch (err) {
     console.error("Migration error:", err);
     res.status(500).json({ ok: false, error: err.message });
