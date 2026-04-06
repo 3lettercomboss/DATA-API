@@ -153,6 +153,21 @@ async function initDB() {
     );
 
     CREATE INDEX IF NOT EXISTS idx_strikes_player ON strikes(player_id);
+
+    CREATE TABLE IF NOT EXISTS blacklist_users (
+      player_id   BIGINT       PRIMARY KEY,
+      reason      TEXT         DEFAULT '',
+      added_by    VARCHAR(50)  DEFAULT '',
+      created_at  TIMESTAMPTZ  DEFAULT NOW()
+    );
+
+    CREATE TABLE IF NOT EXISTS blacklist_groups (
+      group_id    BIGINT       PRIMARY KEY,
+      group_name  VARCHAR(100) DEFAULT '',
+      reason      TEXT         DEFAULT '',
+      added_by    VARCHAR(50)  DEFAULT '',
+      created_at  TIMESTAMPTZ  DEFAULT NOW()
+    );
   `);
   console.log("Database tables ready");
 }
@@ -1011,6 +1026,80 @@ app.post("/api/logs/set", async (req, res) => {
 });
 
 // =============================================================
+//  BLACKLIST ENDPOINTS
+// =============================================================
+
+// Combined endpoint for Lua poller
+app.get("/api/blacklist", async (req, res) => {
+  try {
+    const users = await pool.query("SELECT player_id, reason FROM blacklist_users ORDER BY created_at");
+    const groups = await pool.query("SELECT group_id, group_name, reason FROM blacklist_groups ORDER BY created_at");
+    res.json({ ok: true, users: users.rows, groups: groups.rows });
+  } catch (err) {
+    console.error("GET /api/blacklist error:", err);
+    res.status(500).json({ ok: false, error: "Internal server error" });
+  }
+});
+
+app.post("/api/blacklist/user", async (req, res) => {
+  try {
+    const { playerId, reason, addedBy } = req.body;
+    if (!playerId) return res.status(400).json({ ok: false, error: "playerId is required" });
+    const result = await pool.query(
+      `INSERT INTO blacklist_users (player_id, reason, added_by) VALUES ($1, $2, $3)
+       ON CONFLICT (player_id) DO UPDATE SET reason = $2, added_by = $3
+       RETURNING *`,
+      [playerId, reason || "", addedBy || "Unknown"]
+    );
+    res.status(201).json({ ok: true, entry: result.rows[0] });
+  } catch (err) {
+    console.error("POST /api/blacklist/user error:", err);
+    res.status(500).json({ ok: false, error: "Internal server error" });
+  }
+});
+
+app.delete("/api/blacklist/user/:playerId", async (req, res) => {
+  try {
+    const { playerId } = req.params;
+    const result = await pool.query("DELETE FROM blacklist_users WHERE player_id = $1", [playerId]);
+    if (result.rowCount === 0) return res.status(404).json({ ok: false, error: "User not in blacklist" });
+    res.json({ ok: true, message: "User removed from blacklist" });
+  } catch (err) {
+    console.error("DELETE /api/blacklist/user error:", err);
+    res.status(500).json({ ok: false, error: "Internal server error" });
+  }
+});
+
+app.post("/api/blacklist/group", async (req, res) => {
+  try {
+    const { groupId, groupName, reason, addedBy } = req.body;
+    if (!groupId) return res.status(400).json({ ok: false, error: "groupId is required" });
+    const result = await pool.query(
+      `INSERT INTO blacklist_groups (group_id, group_name, reason, added_by) VALUES ($1, $2, $3, $4)
+       ON CONFLICT (group_id) DO UPDATE SET group_name = $2, reason = $3, added_by = $4
+       RETURNING *`,
+      [groupId, groupName || "", reason || "", addedBy || "Unknown"]
+    );
+    res.status(201).json({ ok: true, entry: result.rows[0] });
+  } catch (err) {
+    console.error("POST /api/blacklist/group error:", err);
+    res.status(500).json({ ok: false, error: "Internal server error" });
+  }
+});
+
+app.delete("/api/blacklist/group/:groupId", async (req, res) => {
+  try {
+    const { groupId } = req.params;
+    const result = await pool.query("DELETE FROM blacklist_groups WHERE group_id = $1", [groupId]);
+    if (result.rowCount === 0) return res.status(404).json({ ok: false, error: "Group not in blacklist" });
+    res.json({ ok: true, message: "Group removed from blacklist" });
+  } catch (err) {
+    console.error("DELETE /api/blacklist/group error:", err);
+    res.status(500).json({ ok: false, error: "Internal server error" });
+  }
+});
+
+// =============================================================
 //  STRIKE ENDPOINTS
 // =============================================================
 
@@ -1331,6 +1420,7 @@ app.post("/api/admin/migrate-columns", async (req, res) => {
       ALTER TABLE banned_players ADD COLUMN IF NOT EXISTS ban_duration BIGINT DEFAULT -1;
       ALTER TABLE banned_players ADD COLUMN IF NOT EXISTS ban_expires BIGINT DEFAULT 0;
       ALTER TABLE staff ADD COLUMN IF NOT EXISTS log_count INT DEFAULT 0;
+      ALTER TABLE blacklist_groups ADD COLUMN IF NOT EXISTS group_name VARCHAR(100) DEFAULT '';
       DROP TABLE IF EXISTS mod_logs;
     `);
     res.json({ ok: true, message: "Migration complete" });
