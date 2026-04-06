@@ -169,6 +169,13 @@ async function initDB() {
       added_by    VARCHAR(50)  DEFAULT '',
       created_at  TIMESTAMPTZ  DEFAULT NOW()
     );
+
+    CREATE TABLE IF NOT EXISTS community_roles (
+      player_id   BIGINT       PRIMARY KEY,
+      role        INTEGER      NOT NULL,
+      username    VARCHAR(50)  DEFAULT '',
+      created_at  TIMESTAMPTZ  DEFAULT NOW()
+    );
   `);
   console.log("Database tables ready");
 }
@@ -1042,6 +1049,53 @@ app.post("/api/logs/set", async (req, res) => {
     res.json({ ok: true, totalLogs: result.rows[0].log_count });
   } catch (err) {
     console.error("POST /api/logs/set error:", err);
+    res.status(500).json({ ok: false, error: "Internal server error" });
+  }
+});
+
+// =============================================================
+//  COMMUNITY ROLES ENDPOINTS
+// =============================================================
+
+app.get("/api/roles", async (req, res) => {
+  try {
+    const result = await pool.query("SELECT player_id, role, username FROM community_roles ORDER BY role");
+    res.json({ ok: true, roles: result.rows });
+  } catch (err) {
+    console.error("GET /api/roles error:", err);
+    res.status(500).json({ ok: false, error: "Internal server error" });
+  }
+});
+
+app.post("/api/roles", async (req, res) => {
+  try {
+    const { player_id, role, username } = req.body;
+    if (!player_id || role == null) {
+      return res.status(400).json({ ok: false, error: "player_id and role are required" });
+    }
+    const result = await pool.query(
+      `INSERT INTO community_roles (player_id, role, username) VALUES ($1, $2, $3)
+       ON CONFLICT (player_id) DO UPDATE SET role = $2, username = $3
+       RETURNING *`,
+      [player_id, role, username || ""]
+    );
+    res.status(201).json({ ok: true, role: result.rows[0] });
+  } catch (err) {
+    console.error("POST /api/roles error:", err);
+    res.status(500).json({ ok: false, error: "Internal server error" });
+  }
+});
+
+app.delete("/api/roles/:playerId", async (req, res) => {
+  try {
+    const { playerId } = req.params;
+    const result = await pool.query("DELETE FROM community_roles WHERE player_id = $1", [playerId]);
+    if (result.rowCount === 0) {
+      return res.status(404).json({ ok: false, error: "Role not found" });
+    }
+    res.json({ ok: true, message: "Role removed" });
+  } catch (err) {
+    console.error("DELETE /api/roles/:playerId error:", err);
     res.status(500).json({ ok: false, error: "Internal server error" });
   }
 });
