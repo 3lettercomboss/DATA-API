@@ -1358,6 +1358,21 @@ app.post("/api/admin/migrate-columns", async (req, res) => {
   }
 });
 
+app.post("/api/admin/clear-table", async (req, res) => {
+  try {
+    const { table } = req.body;
+    const allowed = ["mod_logs", "strikes", "kick_queue", "previous_bans"];
+    if (!table || !allowed.includes(table)) {
+      return res.status(400).json({ ok: false, error: `Table must be one of: ${allowed.join(", ")}` });
+    }
+    const result = await pool.query(`DELETE FROM ${table}`);
+    res.json({ ok: true, message: `Cleared ${result.rowCount} row(s) from ${table}` });
+  } catch (err) {
+    console.error("Clear table error:", err);
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
 const PORT = process.env.PORT || 3000;
 
 initDB().then(() => {
