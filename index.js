@@ -172,9 +172,20 @@ async function initDB() {
 
     CREATE TABLE IF NOT EXISTS community_roles (
       player_id   BIGINT       PRIMARY KEY,
+      discord_id  BIGINT,
       role        INTEGER      NOT NULL,
       username    VARCHAR(50)  DEFAULT '',
       created_at  TIMESTAMPTZ  DEFAULT NOW()
+    );
+
+    CREATE TABLE IF NOT EXISTS server_staff (
+      id          SERIAL PRIMARY KEY,
+      player_id   BIGINT       NOT NULL,
+      discord_id  BIGINT       NOT NULL,
+      username    VARCHAR(50)  DEFAULT '',
+      role_name   VARCHAR(50)  NOT NULL,
+      created_at  TIMESTAMPTZ  DEFAULT NOW(),
+      UNIQUE(discord_id)
     );
   `);
   console.log("Database tables ready");
@@ -1054,12 +1065,69 @@ app.post("/api/logs/set", async (req, res) => {
 });
 
 // =============================================================
+//  SERVER STAFF ENDPOINTS
+// =============================================================
+
+app.get("/api/server-staff", async (req, res) => {
+  try {
+    const result = await pool.query("SELECT * FROM server_staff ORDER BY role_name, username");
+    res.json({ ok: true, staff: result.rows });
+  } catch (err) {
+    console.error("GET /api/server-staff error:", err);
+    res.status(500).json({ ok: false, error: "Internal server error" });
+  }
+});
+
+app.get("/api/server-staff/discord/:discordId", async (req, res) => {
+  try {
+    const { discordId } = req.params;
+    const result = await pool.query("SELECT * FROM server_staff WHERE discord_id = $1", [discordId]);
+    if (result.rows.length === 0) return res.status(404).json({ ok: false, error: "Not found" });
+    res.json({ ok: true, entry: result.rows[0] });
+  } catch (err) {
+    console.error("GET /api/server-staff/discord error:", err);
+    res.status(500).json({ ok: false, error: "Internal server error" });
+  }
+});
+
+app.post("/api/server-staff", async (req, res) => {
+  try {
+    const { playerId, discordId, username, roleName } = req.body;
+    if (!playerId || !discordId || !roleName) {
+      return res.status(400).json({ ok: false, error: "playerId, discordId, and roleName are required" });
+    }
+    const result = await pool.query(
+      `INSERT INTO server_staff (player_id, discord_id, username, role_name) VALUES ($1, $2, $3, $4)
+       ON CONFLICT (discord_id) DO UPDATE SET player_id = $1, username = $3, role_name = $4
+       RETURNING *`,
+      [playerId, discordId, username || "", roleName]
+    );
+    res.status(201).json({ ok: true, entry: result.rows[0] });
+  } catch (err) {
+    console.error("POST /api/server-staff error:", err);
+    res.status(500).json({ ok: false, error: "Internal server error" });
+  }
+});
+
+app.delete("/api/server-staff/discord/:discordId", async (req, res) => {
+  try {
+    const { discordId } = req.params;
+    const result = await pool.query("DELETE FROM server_staff WHERE discord_id = $1", [discordId]);
+    if (result.rowCount === 0) return res.status(404).json({ ok: false, error: "Not found" });
+    res.json({ ok: true, message: "Server staff entry removed" });
+  } catch (err) {
+    console.error("DELETE /api/server-staff error:", err);
+    res.status(500).json({ ok: false, error: "Internal server error" });
+  }
+});
+
+// =============================================================
 //  COMMUNITY ROLES ENDPOINTS
 // =============================================================
 
 app.get("/api/roles", async (req, res) => {
   try {
-    const result = await pool.query("SELECT player_id, role, username FROM community_roles ORDER BY role");
+    const result = await pool.query("SELECT player_id, discord_id, role, username FROM community_roles ORDER BY role");
     res.json({ ok: true, roles: result.rows });
   } catch (err) {
     console.error("GET /api/roles error:", err);
@@ -1069,15 +1137,15 @@ app.get("/api/roles", async (req, res) => {
 
 app.post("/api/roles", async (req, res) => {
   try {
-    const { player_id, role, username } = req.body;
+    const { player_id, discord_id, role, username } = req.body;
     if (!player_id || role == null) {
       return res.status(400).json({ ok: false, error: "player_id and role are required" });
     }
     const result = await pool.query(
-      `INSERT INTO community_roles (player_id, role, username) VALUES ($1, $2, $3)
-       ON CONFLICT (player_id) DO UPDATE SET role = $2, username = $3
+      `INSERT INTO community_roles (player_id, discord_id, role, username) VALUES ($1, $2, $3, $4)
+       ON CONFLICT (player_id) DO UPDATE SET discord_id = $2, role = $3, username = $4
        RETURNING *`,
-      [player_id, role, username || ""]
+      [player_id, discord_id || null, role, username || ""]
     );
     res.status(201).json({ ok: true, role: result.rows[0] });
   } catch (err) {
@@ -1497,6 +1565,7 @@ app.post("/api/admin/migrate-columns", async (req, res) => {
       ALTER TABLE staff ADD COLUMN IF NOT EXISTS log_count INT DEFAULT 0;
       ALTER TABLE staff ADD COLUMN IF NOT EXISTS server_role VARCHAR(50) DEFAULT '';
       ALTER TABLE blacklist_groups ADD COLUMN IF NOT EXISTS group_name VARCHAR(100) DEFAULT '';
+      ALTER TABLE community_roles ADD COLUMN IF NOT EXISTS discord_id BIGINT;
       DROP TABLE IF EXISTS mod_logs;
     `);
     res.json({ ok: true, message: "Migration complete" });
