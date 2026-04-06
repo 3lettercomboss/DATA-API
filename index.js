@@ -152,6 +152,18 @@ async function initDB() {
     );
 
     CREATE INDEX IF NOT EXISTS idx_strikes_player ON strikes(player_id);
+
+    CREATE TABLE IF NOT EXISTS mod_logs (
+      id              SERIAL PRIMARY KEY,
+      staff_player_id BIGINT       NOT NULL,
+      staff_discord_id BIGINT,
+      action_type     VARCHAR(20)  NOT NULL,
+      target_player_id BIGINT,
+      reason          TEXT         DEFAULT '',
+      created_at      TIMESTAMPTZ  DEFAULT NOW()
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_mod_logs_staff ON mod_logs(staff_player_id);
   `);
   console.log("Database tables ready");
 }
@@ -956,6 +968,64 @@ app.delete("/api/staff/:playerId", async (req, res) => {
     res.json({ ok: true, message: "Staff member removed" });
   } catch (err) {
     console.error("DELETE /api/staff/:playerId error:", err);
+    res.status(500).json({ ok: false, error: "Internal server error" });
+  }
+});
+
+// =============================================================
+//  MOD LOG ENDPOINTS
+// =============================================================
+
+app.get("/api/logs/:playerId", async (req, res) => {
+  try {
+    const { playerId } = req.params;
+    const result = await pool.query(
+      "SELECT COUNT(*)::int AS count FROM mod_logs WHERE staff_player_id = $1",
+      [playerId]
+    );
+    res.json({ ok: true, count: result.rows[0].count });
+  } catch (err) {
+    console.error("GET /api/logs/:playerId error:", err);
+    res.status(500).json({ ok: false, error: "Internal server error" });
+  }
+});
+
+app.get("/api/logs/:playerId/history", async (req, res) => {
+  try {
+    const { playerId } = req.params;
+    const limit = Math.min(parseInt(req.query.limit) || 20, 100);
+    const result = await pool.query(
+      "SELECT * FROM mod_logs WHERE staff_player_id = $1 ORDER BY created_at DESC LIMIT $2",
+      [playerId, limit]
+    );
+    const countResult = await pool.query(
+      "SELECT COUNT(*)::int AS count FROM mod_logs WHERE staff_player_id = $1",
+      [playerId]
+    );
+    res.json({ ok: true, logs: result.rows, count: countResult.rows[0].count });
+  } catch (err) {
+    console.error("GET /api/logs/:playerId/history error:", err);
+    res.status(500).json({ ok: false, error: "Internal server error" });
+  }
+});
+
+app.post("/api/logs", async (req, res) => {
+  try {
+    const { staffPlayerId, staffDiscordId, actionType, targetPlayerId, reason } = req.body;
+    if (!staffPlayerId || !actionType) {
+      return res.status(400).json({ ok: false, error: "staffPlayerId and actionType are required" });
+    }
+    const result = await pool.query(
+      "INSERT INTO mod_logs (staff_player_id, staff_discord_id, action_type, target_player_id, reason) VALUES ($1, $2, $3, $4, $5) RETURNING *",
+      [staffPlayerId, staffDiscordId || null, actionType, targetPlayerId || null, reason || ""]
+    );
+    const countResult = await pool.query(
+      "SELECT COUNT(*)::int AS count FROM mod_logs WHERE staff_player_id = $1",
+      [staffPlayerId]
+    );
+    res.status(201).json({ ok: true, log: result.rows[0], totalLogs: countResult.rows[0].count });
+  } catch (err) {
+    console.error("POST /api/logs error:", err);
     res.status(500).json({ ok: false, error: "Internal server error" });
   }
 });
