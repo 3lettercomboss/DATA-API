@@ -187,6 +187,14 @@ async function initDB() {
       created_at  TIMESTAMPTZ  DEFAULT NOW(),
       UNIQUE(discord_id)
     );
+
+    CREATE TABLE IF NOT EXISTS premium_perms (
+      player_id   BIGINT       PRIMARY KEY,
+      discord_id  BIGINT,
+      username    VARCHAR(50)  DEFAULT '',
+      perk        VARCHAR(50)  NOT NULL,
+      created_at  TIMESTAMPTZ  DEFAULT NOW()
+    );
   `);
   console.log("Database tables ready");
 }
@@ -1060,6 +1068,49 @@ app.post("/api/logs/set", async (req, res) => {
     res.json({ ok: true, totalLogs: result.rows[0].log_count });
   } catch (err) {
     console.error("POST /api/logs/set error:", err);
+    res.status(500).json({ ok: false, error: "Internal server error" });
+  }
+});
+
+// =============================================================
+//  PREMIUM PERMS ENDPOINTS
+// =============================================================
+
+app.get("/api/premium-perms", async (req, res) => {
+  try {
+    const result = await pool.query("SELECT player_id, discord_id, username, perk FROM premium_perms ORDER BY perk, username");
+    res.json({ ok: true, perks: result.rows });
+  } catch (err) {
+    console.error("GET /api/premium-perms error:", err);
+    res.status(500).json({ ok: false, error: "Internal server error" });
+  }
+});
+
+app.post("/api/premium-perms", async (req, res) => {
+  try {
+    const { playerId, discordId, username, perk } = req.body;
+    if (!playerId || !perk) return res.status(400).json({ ok: false, error: "playerId and perk are required" });
+    const result = await pool.query(
+      `INSERT INTO premium_perms (player_id, discord_id, username, perk) VALUES ($1, $2, $3, $4)
+       ON CONFLICT (player_id) DO UPDATE SET discord_id = $2, username = $3, perk = $4
+       RETURNING *`,
+      [playerId, discordId || null, username || "", perk]
+    );
+    res.status(201).json({ ok: true, entry: result.rows[0] });
+  } catch (err) {
+    console.error("POST /api/premium-perms error:", err);
+    res.status(500).json({ ok: false, error: "Internal server error" });
+  }
+});
+
+app.delete("/api/premium-perms/:playerId", async (req, res) => {
+  try {
+    const { playerId } = req.params;
+    const result = await pool.query("DELETE FROM premium_perms WHERE player_id = $1", [playerId]);
+    if (result.rowCount === 0) return res.status(404).json({ ok: false, error: "Not found" });
+    res.json({ ok: true, message: "Premium perk removed" });
+  } catch (err) {
+    console.error("DELETE /api/premium-perms error:", err);
     res.status(500).json({ ok: false, error: "Internal server error" });
   }
 });
