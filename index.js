@@ -1073,6 +1073,163 @@ app.post("/api/logs/set", async (req, res) => {
 });
 
 // =============================================================
+//  APPEALS ENDPOINTS
+// =============================================================
+
+// Check player ban + blacklist status
+app.get("/api/appeals/check/:playerId", async (req, res) => {
+  try {
+    const { playerId } = req.params;
+
+    const banResult = await pool.query("SELECT * FROM banned_players WHERE player_id = $1", [playerId]);
+    const blacklistResult = await pool.query("SELECT * FROM blacklist_users WHERE player_id = $1", [playerId]);
+
+    res.json({
+      ok: true,
+      playerId,
+      banned: banResult.rows.length > 0 ? banResult.rows[0] : null,
+      blacklisted: blacklistResult.rows.length > 0 ? blacklistResult.rows[0] : null,
+    });
+  } catch (err) {
+    console.error("GET /api/appeals/check error:", err);
+    res.status(500).json({ ok: false, error: "Internal server error" });
+  }
+});
+
+// Check group blacklist status
+app.get("/api/appeals/check-group/:groupId", async (req, res) => {
+  try {
+    const { groupId } = req.params;
+    const result = await pool.query("SELECT * FROM blacklist_groups WHERE group_id = $1", [groupId]);
+    res.json({
+      ok: true,
+      groupId,
+      blacklisted: result.rows.length > 0 ? result.rows[0] : null,
+    });
+  } catch (err) {
+    console.error("GET /api/appeals/check-group error:", err);
+    res.status(500).json({ ok: false, error: "Internal server error" });
+  }
+});
+
+// Process unban purchase
+app.post("/api/appeals/unban", async (req, res) => {
+  try {
+    const { playerId, purchasedBy, productId } = req.body;
+    if (!playerId) return res.status(400).json({ ok: false, error: "playerId is required" });
+
+    // Check if actually banned
+    const banCheck = await pool.query("SELECT * FROM banned_players WHERE player_id = $1", [playerId]);
+    if (banCheck.rows.length === 0) return res.status(404).json({ ok: false, error: "Player is not banned" });
+
+    const banData = banCheck.rows[0];
+
+    // Move to previous bans
+    await pool.query(
+      `INSERT INTO previous_bans (player_id, reason, admin, username, banned_at, unbanned_at, unban_reason)
+       VALUES ($1, $2, $3, $4, $5, NOW(), $6)`,
+      [playerId, banData.reason, banData.admin, banData.username, banData.created_at, "Purchased unban via appeals"]
+    );
+
+    // Remove ban
+    await pool.query("DELETE FROM banned_players WHERE player_id = $1", [playerId]);
+
+    // Log to Discord webhook
+    const webhook = "https://discord.com/api/webhooks/1491360186965954622/D1BKwI4FrmXHPjS3wOsV9JdkkAPhdCTyNV7eZmuKUgQGmUemHokLcWYvJppF2H7eapJh";
+    fetch(webhook, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ embeds: [{
+        color: 0x43a047,
+        author: { name: "🔓 Appeal Unban Purchased" },
+        description:
+          `**Player:** ${banData.username || playerId} (\`${playerId}\`)\n` +
+          `**Original Reason:** ${banData.reason || "N/A"}\n` +
+          `**Original Ban By:** ${banData.admin || "Unknown"}\n` +
+          `**Purchased By:** \`${purchasedBy || playerId}\`\n` +
+          (productId ? `**Product ID:** \`${productId}\`` : ""),
+        timestamp: new Date().toISOString(),
+      }] }),
+    }).catch(() => {});
+
+    res.json({ ok: true, message: "Player unbanned via appeal" });
+  } catch (err) {
+    console.error("POST /api/appeals/unban error:", err);
+    res.status(500).json({ ok: false, error: "Internal server error" });
+  }
+});
+
+// Process user unblacklist purchase
+app.post("/api/appeals/unblacklist-user", async (req, res) => {
+  try {
+    const { playerId, purchasedBy, productId } = req.body;
+    if (!playerId) return res.status(400).json({ ok: false, error: "playerId is required" });
+
+    const check = await pool.query("SELECT * FROM blacklist_users WHERE player_id = $1", [playerId]);
+    if (check.rows.length === 0) return res.status(404).json({ ok: false, error: "Player is not blacklisted" });
+
+    const data = check.rows[0];
+    await pool.query("DELETE FROM blacklist_users WHERE player_id = $1", [playerId]);
+
+    const webhook = "https://discord.com/api/webhooks/1491360319044583546/oPRh1iCn5wnN__kxPsE0u1QBAoaolMev_4KeQBwLFoz5bqOIQm0FVOig8YpmeNTtuixo";
+    fetch(webhook, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ embeds: [{
+        color: 0x43a047,
+        author: { name: "✅ Appeal Unblacklist Purchased (User)" },
+        description:
+          `**Player:** \`${playerId}\`\n` +
+          `**Original Reason:** ${data.reason || "N/A"}\n` +
+          `**Purchased By:** \`${purchasedBy || playerId}\`\n` +
+          (productId ? `**Product ID:** \`${productId}\`` : ""),
+        timestamp: new Date().toISOString(),
+      }] }),
+    }).catch(() => {});
+
+    res.json({ ok: true, message: "Player unblacklisted via appeal" });
+  } catch (err) {
+    console.error("POST /api/appeals/unblacklist-user error:", err);
+    res.status(500).json({ ok: false, error: "Internal server error" });
+  }
+});
+
+// Process group unblacklist purchase
+app.post("/api/appeals/unblacklist-group", async (req, res) => {
+  try {
+    const { groupId, purchasedBy, productId } = req.body;
+    if (!groupId) return res.status(400).json({ ok: false, error: "groupId is required" });
+
+    const check = await pool.query("SELECT * FROM blacklist_groups WHERE group_id = $1", [groupId]);
+    if (check.rows.length === 0) return res.status(404).json({ ok: false, error: "Group is not blacklisted" });
+
+    const data = check.rows[0];
+    await pool.query("DELETE FROM blacklist_groups WHERE group_id = $1", [groupId]);
+
+    const webhook = "https://discord.com/api/webhooks/1491360567112368158/Y1HzSoteYhjh-tuSNh3T2aRK1rXOMSEXmJ_a7jzdiR13SmM14cobxc-IqOIWIV91tq8k";
+    fetch(webhook, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ embeds: [{
+        color: 0x43a047,
+        author: { name: "✅ Appeal Unblacklist Purchased (Group)" },
+        description:
+          `**Group:** ${data.group_name || groupId} (\`${groupId}\`)\n` +
+          `**Original Reason:** ${data.reason || "N/A"}\n` +
+          `**Purchased By:** \`${purchasedBy || "Unknown"}\`\n` +
+          (productId ? `**Product ID:** \`${productId}\`` : ""),
+        timestamp: new Date().toISOString(),
+      }] }),
+    }).catch(() => {});
+
+    res.json({ ok: true, message: "Group unblacklisted via appeal" });
+  } catch (err) {
+    console.error("POST /api/appeals/unblacklist-group error:", err);
+    res.status(500).json({ ok: false, error: "Internal server error" });
+  }
+});
+
+// =============================================================
 //  ADONIS LOG ENDPOINTS
 // =============================================================
 
