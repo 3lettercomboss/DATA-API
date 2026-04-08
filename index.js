@@ -1076,9 +1076,6 @@ app.post("/api/logs/set", async (req, res) => {
 //  ADONIS LOG ENDPOINTS
 // =============================================================
 
-const ADONIS_WEBHOOK = process.env.ADONIS_LOG_WEBHOOK;
-const PREMIUM_WEBHOOK = process.env.PREMIUM_LOG_WEBHOOK;
-
 app.post("/api/adonis-logs", async (req, res) => {
   try {
     const { playerId, command, timestamp } = req.body;
@@ -1096,14 +1093,12 @@ app.post("/api/adonis-logs", async (req, res) => {
     }
 
     // Check premium perms table
-    let perkName = null;
     const premResult = await pool.query("SELECT username, discord_id, perk FROM premium_perms WHERE player_id = $1", [playerId]);
     if (premResult.rows.length > 0) {
       if (!username) {
         username = premResult.rows[0].username;
         discordId = premResult.rows[0].discord_id;
       }
-      perkName = premResult.rows[0].perk;
       logType = "premium";
     }
 
@@ -1111,31 +1106,8 @@ app.post("/api/adonis-logs", async (req, res) => {
     if (staffResult.rows.length > 0) logType = "staff";
 
     const displayName = username || `${playerId}`;
-    const discordMention = discordId ? ` (<@${discordId}>)` : "";
-    const ts = timestamp || Math.floor(Date.now() / 1000);
 
-    // Send to appropriate Discord webhook
-    const webhookUrl = logType === "premium" ? PREMIUM_WEBHOOK : ADONIS_WEBHOOK;
-    if (webhookUrl) {
-      const embed = {
-        color: logType === "premium" ? 0x9c27b0 : 0x2196f3,
-        author: { name: logType === "premium" ? "💎 Premium Command Log" : "⚡ Staff Command Log" },
-        description:
-          `**User:** ${displayName}${discordMention}\n` +
-          `**Player ID:** \`${playerId}\`\n` +
-          (perkName ? `**Perk:** ${perkName}\n` : "") +
-          `**Command:** \`${command}\``,
-        timestamp: new Date(ts * 1000).toISOString(),
-      };
-
-      fetch(webhookUrl, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ embeds: [embed] }),
-      }).catch(() => {});
-    }
-
-    res.json({ ok: true, logged: true, type: logType });
+    res.json({ ok: true, log: { type: logType, username: displayName, discordId: discordId ? String(discordId) : null } });
   } catch (err) {
     console.error("POST /api/adonis-logs error:", err);
     res.status(500).json({ ok: false, error: "Internal server error" });
