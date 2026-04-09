@@ -1550,6 +1550,32 @@ app.delete("/api/strikes/:playerId", async (req, res) => {
 //  MODERATION / BAN ENDPOINTS
 // =============================================================
 
+app.get("/api/moderation/bancount", async (req, res) => {
+  try {
+    const result = await pool.query("SELECT COUNT(*) FROM banned_players");
+    res.json({ ok: true, count: parseInt(result.rows[0].count) });
+  } catch (err) {
+    console.error("GET /api/moderation/bancount error:", err);
+    res.status(500).json({ ok: false, error: "Internal server error" });
+  }
+});
+
+app.post("/api/moderation/unban-all", async (req, res) => {
+  try {
+    // Move all bans to previous_bans first
+    await pool.query(
+      `INSERT INTO previous_bans (player_id, reason, admin, username, banned_at, unbanned_at, unban_reason)
+       SELECT player_id, reason, admin, username, created_at, NOW(), 'Unban wave'
+       FROM banned_players`
+    );
+    const result = await pool.query("DELETE FROM banned_players");
+    res.json({ ok: true, unbanned: result.rowCount });
+  } catch (err) {
+    console.error("POST /api/moderation/unban-all error:", err);
+    res.status(500).json({ ok: false, error: "Internal server error" });
+  }
+});
+
 app.get("/api/moderation/recent", async (req, res) => {
   try {
     const after = req.query.after;
