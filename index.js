@@ -1126,9 +1126,9 @@ app.post("/api/appeals/unban", async (req, res) => {
 
     // Move to previous bans
     await pool.query(
-      `INSERT INTO previous_bans (player_id, reason, admin, username, banned_at, unbanned_at, unban_reason)
-       VALUES ($1, $2, $3, $4, $5, NOW(), $6)`,
-      [playerId, banData.reason, banData.admin, banData.username, banData.created_at, "Purchased unban via appeals"]
+      `INSERT INTO previous_bans (player_id, reason, time, action_taken_by)
+       VALUES ($1, $2, $3, $4)`,
+      [playerId, banData.ban_reason || "", Math.floor(Date.now() / 1000), "Purchased unban via appeals"]
     );
 
     // Remove ban
@@ -1564,8 +1564,8 @@ app.post("/api/moderation/unban-all", async (req, res) => {
   try {
     // Move all bans to previous_bans first
     await pool.query(
-      `INSERT INTO previous_bans (player_id, reason, admin, username, banned_at, unbanned_at, unban_reason)
-       SELECT player_id, reason, admin, username, created_at, NOW(), 'Unban wave'
+      `INSERT INTO previous_bans (player_id, reason, time, action_taken_by)
+       SELECT player_id, ban_reason, EXTRACT(EPOCH FROM NOW())::BIGINT, 'Unban Wave'
        FROM banned_players`
     );
     const result = await pool.query("DELETE FROM banned_players");
